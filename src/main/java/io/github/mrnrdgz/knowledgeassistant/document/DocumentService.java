@@ -1,5 +1,7 @@
 package io.github.mrnrdgz.knowledgeassistant.document;
 
+import io.github.mrnrdgz.knowledgeassistant.entity.Document;
+import io.github.mrnrdgz.knowledgeassistant.repository.DocumentRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -13,15 +15,21 @@ public class DocumentService {
     private final PdfTextExtractor pdfTextExtractor;
     private final TextChunker textChunker;
     private final EmbeddingGenerator embeddingGenerator;
+    private final DocumentRepository documentRepository;
+    private final DocumentPersistenceService documentPersistenceService;
 
     public DocumentService(
             PdfTextExtractor pdfTextExtractor,
             TextChunker textChunker,
-            EmbeddingGenerator embeddingGenerator) {
+            EmbeddingGenerator embeddingGenerator,
+            DocumentRepository documentRepository,
+            DocumentPersistenceService documentPersistenceService) {
 
         this.pdfTextExtractor = pdfTextExtractor;
         this.textChunker = textChunker;
         this.embeddingGenerator= embeddingGenerator;
+        this.documentRepository = documentRepository;
+        this.documentPersistenceService = documentPersistenceService;
     }
     public DocumentAcceptanceResult acceptDocument(MultipartFile file) {
 
@@ -34,6 +42,9 @@ public class DocumentService {
                     "Only PDF documents are supported"
             );
         }
+
+        Document document = new Document(file.getOriginalFilename());
+        documentRepository.save(document);
 
         return new DocumentAcceptanceResult(
                 file.getOriginalFilename(),
@@ -79,5 +90,28 @@ public class DocumentService {
                 embeddedChunks.add(embeddedChunk);
             }
             return embeddedChunks;
+    }
+    public void processAndPersistDocument(MultipartFile file, Document document) {
+        document.markAsProcessing();
+        documentRepository.save(document);
+
+        try {
+            List<String> chunks = processDocument(file);
+            List<EmbeddedChunk> embeddedChunks = generateEmbeddings(chunks);
+
+            documentPersistenceService.persistDocument(document.getId(), embeddedChunks);
+        } catch (RuntimeException e) {
+            String errorMessage = e.getMessage();
+
+            if (errorMessage == null || errorMessage.isBlank()) {
+                errorMessage = "Document processing failed";
+            }
+
+            documentPersistenceService.markDocumentAsFailed(
+                    document.getId(), errorMessage
+            );
+
+            throw e;
+        }
     }
 }

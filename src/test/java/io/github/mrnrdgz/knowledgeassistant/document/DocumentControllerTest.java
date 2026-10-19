@@ -46,7 +46,7 @@ public class DocumentControllerTest {
                         multipart("/documents")
                                 .file(file)
                 )
-                .andExpect(status().isOk())
+                .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.fileName").value("manual.pdf"))
                 .andExpect(jsonPath("$.status").value("ACCEPTED"));
     }

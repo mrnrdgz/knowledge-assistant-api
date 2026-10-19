@@ -1,16 +1,16 @@
 package io.github.mrnrdgz.knowledgeassistant.document;
-import net.bytebuddy.build.ToStringPlugin;
+import io.github.mrnrdgz.knowledgeassistant.entity.Document;
+import io.github.mrnrdgz.knowledgeassistant.repository.DocumentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.List;
+import org.mockito.ArgumentCaptor;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 public class DocumentServiceTest {
@@ -18,17 +18,25 @@ public class DocumentServiceTest {
     private TextChunker textChunker;
     private EmbeddingGenerator embeddingGenerator;
     private DocumentService documentService;
+    private DocumentRepository documentRepository;
+    private DocumentPersistenceService documentPersistenceService =
+            mock(DocumentPersistenceService.class);
 
     @BeforeEach
     void setUp() {
         pdfTextExtractor = mock(PdfTextExtractor.class);
         textChunker = mock(TextChunker.class);
         embeddingGenerator = mock(EmbeddingGenerator.class);
+        documentRepository = mock(DocumentRepository.class);
+        documentPersistenceService = mock(DocumentPersistenceService.class);
 
         documentService = new DocumentService(
                 pdfTextExtractor,
                 textChunker,
-                embeddingGenerator
+                embeddingGenerator,
+                documentRepository,
+                documentPersistenceService
+
         );
     }
     @Test
@@ -47,6 +55,16 @@ public class DocumentServiceTest {
         // Assert
         assertEquals(DocumentStatus.ACCEPTED, result.status());
         assertEquals("manual.pdf", result.fileName());
+
+        ArgumentCaptor<Document> captor =
+                ArgumentCaptor.forClass(Document.class);
+
+        verify(documentRepository).save(captor.capture());
+        Document savedDocument = captor.getValue();
+
+        assertEquals("manual.pdf", savedDocument.getFileName());
+        assertEquals(DocumentStatus.ACCEPTED, savedDocument.getStatus());
+
     }
     @Test
     void shouldRejectEmptyDocument(){
@@ -62,6 +80,9 @@ public class DocumentServiceTest {
                 EmptyDocumentException.class,
                 () -> documentService.acceptDocument(file)
         );
+
+        verify(documentRepository, never())
+                .save(any(Document.class));
     }
     @Test
     void shouldRejectNonPdfDocument(){
@@ -77,6 +98,9 @@ public class DocumentServiceTest {
                 UnsupportedDocumentTypeException.class,
                 () -> documentService.acceptDocument(file)
         );
+
+        verify(documentRepository, never())
+                .save(any(Document.class));
     }
     @Test
     void shouldRejectDocumentWithoutExtractableText(){
@@ -222,5 +246,135 @@ public class DocumentServiceTest {
         verify(embeddingGenerator).generate("chunk2");
         verify(embeddingGenerator, never())
                 .generate("chunk3");
+    }
+    @Test
+    void shouldPersistGeneratedDocumentChunks() {
+        // GIVEN
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "manual.pdf",
+                "application/pdf",
+                "fake pdf content".getBytes()
+        );
+
+        Document document = new Document("manual.pdf");
+        String text = "Knowledge Assistant document";
+
+        List<String> chunks = List.of("chunk1", "chunk2");
+
+        when(pdfTextExtractor.extract(any(InputStream.class)))
+                .thenReturn(text);
+
+        when(textChunker.split(text))
+                .thenReturn(chunks);
+
+        when(embeddingGenerator.generate("chunk1"))
+                .thenReturn(List.of(0.1, 0.2, 0.3));
+
+        when(embeddingGenerator.generate("chunk2"))
+                .thenReturn(List.of(0.4, 0.5, 0.6));
+
+        // WHEN
+        documentService.processAndPersistDocument(file, document);
+
+        // THEN
+        verify(documentRepository).save(document);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EmbeddedChunk>> captor =
+                ArgumentCaptor.forClass(List.class);
+
+        verify(documentPersistenceService)
+                .persistDocument(isNull(), captor.capture());
+
+        List<EmbeddedChunk> capturedChunks = captor.getValue();
+
+        assertEquals(2, capturedChunks.size());
+
+        assertEquals("chunk1", capturedChunks.get(0).text());
+        assertEquals(List.of(0.1, 0.2, 0.3),
+                capturedChunks.get(0).embedding());
+
+        assertEquals("chunk2", capturedChunks.get(1).text());
+        assertEquals(List.of(0.4, 0.5, 0.6),
+                capturedChunks.get(1).embedding());
+
+        verify(documentPersistenceService, never())
+                .markDocumentAsFailed(any(), anyString());
+    }
+    @Test
+    void shouldMarkDocumentAsFailedWhenEmbeddingGenerationFails() {
+        // GIVEN
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "manual.pdf",
+                "application/pdf",
+                "fake pdf content".getBytes()
+        );
+
+        Document document = new Document("manual.pdf");
+        String text = "Knowledge Assistant document";
+        List<String> chunks = List.of("chunk1", "chunk2");
+
+        when(pdfTextExtractor.extract(any(InputStream.class)))
+                .thenReturn(text);
+
+        when(textChunker.split(text))
+                .thenReturn(chunks);
+
+        when(embeddingGenerator.generate(anyString()))
+                .thenThrow(new RuntimeException("Bedrock unavailable"));
+
+        // WHEN
+        DocumentProcessingException exception = assertThrows(
+                DocumentProcessingException.class,
+                () -> documentService.processAndPersistDocument(file, document)
+        );
+
+        // THEN
+        verify(documentRepository).save(document);
+
+        verify(documentPersistenceService).markDocumentAsFailed(
+                isNull(),
+                eq(exception.getMessage())
+        );
+
+        verify(documentPersistenceService, never())
+                .persistDocument(any(), anyList());
+    }
+    @Test
+    void shouldPersistFallbackErrorMessageWhenExceptionHasNoMessage(){
+        // GIVEN
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "manual.pdf",
+                "application/pdf",
+                "fake pdf content".getBytes()
+        );
+
+        Document document = new Document("manual.pdf");
+
+        when(pdfTextExtractor.extract(any(InputStream.class)))
+                .thenReturn("Knowledge Assistant document");
+
+        when(textChunker.split("Knowledge Assistant document"))
+                .thenReturn(List.of("chunk1"));
+
+        when(embeddingGenerator.generate("chunk1"))
+                .thenReturn(List.of(0.1, 0.2, 0.3));
+
+        doThrow(new RuntimeException())
+                .when(documentPersistenceService)
+                .persistDocument(any(), anyList());
+        // WHEN
+        assertThrows(
+                RuntimeException.class,
+                () -> documentService.processAndPersistDocument(file, document)
+        );
+        // THEN
+        verify(documentPersistenceService).markDocumentAsFailed(
+                isNull(),
+                eq("Document processing failed")
+        );
     }
 }
