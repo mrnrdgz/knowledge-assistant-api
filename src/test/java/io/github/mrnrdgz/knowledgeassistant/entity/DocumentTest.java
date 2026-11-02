@@ -76,7 +76,7 @@ public class DocumentTest {
     @ParameterizedTest
     @EnumSource(
             value = DocumentStatus.class,
-            names = {"ACCEPTED", "PROCESSED", "FAILED"}
+            names = { "PROCESSED", "FAILED"}
     )
     void shouldRejectFailedWhenStatusIsInvalid(DocumentStatus status) {
         // GIVEN
@@ -93,7 +93,7 @@ public class DocumentTest {
     @ParameterizedTest
     @EnumSource(
             value = DocumentStatus.class,
-            names = {"ACCEPTED", "FAILED", "PROCESSED"}
+            names = {"ACCEPTED","FAILED", "PROCESSED"}
     )
     void shouldRejectProcessedWhenStatusIsInvalid(DocumentStatus status) {
         // GIVEN
@@ -144,5 +144,15 @@ public class DocumentTest {
         }
 
         return document;
+    }
+    @Test
+    void  shouldMarkDocumentAsFailedWhenAccepted(){
+        // GIVEN
+        Document document = new Document("manual.pdf");
+        // WHEN
+        document.markAsFailed("PDF reading failed");
+        // THEN
+        assertEquals(DocumentStatus.FAILED, document.getStatus());
+        assertEquals("PDF reading failed",document.getErrorMessage());
     }
 }

@@ -11,15 +11,15 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 @RestController
 @RequestMapping("/documents")
 public class DocumentController {
-    private final DocumentService documentService;
-    public DocumentController(DocumentService documentService) {
-        this.documentService = documentService;
+    private final DocumentIngestionService documentIngestionService;
+    public DocumentController(DocumentIngestionService documentIngestionService) {
+        this.documentIngestionService = documentIngestionService;
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.ACCEPTED)
     public DocumentAcceptanceResult uploadDocument(
             @RequestPart("file") MultipartFile file) {
-        return documentService.acceptDocument(file);
+        return documentIngestionService.ingestDocument(file);
     }
 }

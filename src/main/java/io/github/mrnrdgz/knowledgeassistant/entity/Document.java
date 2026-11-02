@@ -61,9 +61,9 @@ public class Document {
         this.status = DocumentStatus.PROCESSED;
     }
     public void markAsFailed(String errorMessage){
-        if (this.status != DocumentStatus.PROCESSING) {
+        if (this.status != DocumentStatus.PROCESSING && this.status != DocumentStatus.ACCEPTED) {
             throw new IllegalStateException(
-                    "Document must be in PROCESSING status to be marked as FAILED"
+                    "Document must be in PROCESSING or ACCEPTED status to be marked as FAILED"
             );
         }
         if (errorMessage == null || errorMessage.isBlank()) {

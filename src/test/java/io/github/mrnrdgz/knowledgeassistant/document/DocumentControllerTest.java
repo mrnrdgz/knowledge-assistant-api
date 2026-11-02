@@ -17,7 +17,7 @@ import static org.mockito.Mockito.when;
 @WebMvcTest(DocumentController.class)
 public class DocumentControllerTest {
     @MockitoBean
-    private DocumentService documentService;
+    private DocumentIngestionService documentIngestionService;
     @Autowired
     private MockMvc mockMvc;
 
@@ -27,11 +27,12 @@ public class DocumentControllerTest {
         // Arrange
         DocumentAcceptanceResult result =
                 new DocumentAcceptanceResult(
+                        123L,
                         "manual.pdf",
                         DocumentStatus.ACCEPTED
                 );
 
-        when(documentService.acceptDocument(any(MultipartFile.class)))
+        when(documentIngestionService.ingestDocument(any(MultipartFile.class)))
                 .thenReturn(result);
 
         MockMultipartFile file = new MockMultipartFile(
@@ -47,6 +48,7 @@ public class DocumentControllerTest {
                                 .file(file)
                 )
                 .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.documentId").value(123))
                 .andExpect(jsonPath("$.fileName").value("manual.pdf"))
                 .andExpect(jsonPath("$.status").value("ACCEPTED"));
     }
@@ -60,7 +62,7 @@ public class DocumentControllerTest {
                 new byte[0]
         );
 
-        when(documentService.acceptDocument(any(MultipartFile.class)))
+        when(documentIngestionService.ingestDocument(any(MultipartFile.class)))
                 .thenThrow(new EmptyDocumentException(
                         "Document must not be empty"
                 ));
@@ -85,7 +87,7 @@ public class DocumentControllerTest {
                 "contenido".getBytes()
         );
 
-        when(documentService.acceptDocument(any(MultipartFile.class)))
+        when(documentIngestionService.ingestDocument(any(MultipartFile.class)))
                 .thenThrow(new UnsupportedDocumentTypeException(
                         "Only PDF documents are supported"
                 ));

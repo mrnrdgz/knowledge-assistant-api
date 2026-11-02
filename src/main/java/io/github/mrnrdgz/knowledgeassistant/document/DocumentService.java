@@ -5,6 +5,7 @@ import io.github.mrnrdgz.knowledgeassistant.repository.DocumentRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -44,17 +45,17 @@ public class DocumentService {
         }
 
         Document document = new Document(file.getOriginalFilename());
-        documentRepository.save(document);
+
+        Document savedDocument = documentRepository.save(document);
 
         return new DocumentAcceptanceResult(
-                file.getOriginalFilename(),
-                DocumentStatus.ACCEPTED
+                savedDocument.getId(),
+                savedDocument.getFileName(),
+                savedDocument.getStatus()
         );
     }
-    public List<String> processDocument(MultipartFile file) {
-        try (InputStream inputStream = file.getInputStream()) {
-
-            String text = pdfTextExtractor.extract(inputStream);
+    public List<String> processDocument(InputStream file) {
+            String text = pdfTextExtractor.extract(file);
 
             if (text.isBlank()) {
                 throw new NoExtractableTextException(
@@ -63,13 +64,6 @@ public class DocumentService {
             }
 
             return textChunker.split(text);
-
-        } catch (IOException e) {
-            throw new DocumentProcessingException(
-                    "Failed to read document",
-                    e
-            );
-        }
     }
     public List<EmbeddedChunk> generateEmbeddings(List<String> chunks) {
         List<EmbeddedChunk> embeddedChunks = new ArrayList<>();
@@ -91,15 +85,22 @@ public class DocumentService {
             }
             return embeddedChunks;
     }
-    public void processAndPersistDocument(MultipartFile file, Document document) {
+    public void processAndPersistDocument(Long documentId, byte[] pdfBytes) {
+        Document document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new DocumentNotFoundException("Document not found"));
         document.markAsProcessing();
         documentRepository.save(document);
 
         try {
-            List<String> chunks = processDocument(file);
+            List<String> chunks =
+                    processDocument(new ByteArrayInputStream(pdfBytes));
+
             List<EmbeddedChunk> embeddedChunks = generateEmbeddings(chunks);
 
-            documentPersistenceService.persistDocument(document.getId(), embeddedChunks);
+            documentPersistenceService.persistDocument(
+                    document.getId(), embeddedChunks
+            );
+
         } catch (RuntimeException e) {
             String errorMessage = e.getMessage();
 
@@ -113,5 +114,6 @@ public class DocumentService {
 
             throw e;
         }
+
     }
 }

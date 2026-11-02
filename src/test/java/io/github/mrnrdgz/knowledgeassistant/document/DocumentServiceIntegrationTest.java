@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.io.InputStream;
@@ -62,7 +63,7 @@ public class DocumentServiceIntegrationTest {
         //WHEN
         assertThrows(
                 DocumentProcessingException.class,
-                () -> documentService.processAndPersistDocument(file, document)
+                () -> documentService.processAndPersistDocument(documentId, file.getBytes())
         );
         //THEN
         Document savedDocument = documentRepository
@@ -76,4 +77,5 @@ public class DocumentServiceIntegrationTest {
                         .findByDocumentIdOrderByChunkIndexAsc(documentId);
         assertTrue(savedChunks.isEmpty());
     }
+
 }

@@ -6,9 +6,13 @@ import org.junit.jupiter.api.Test;
 
 import org.springframework.mock.web.MockMultipartFile;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
+import java.util.Optional;
+
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -49,12 +53,19 @@ public class DocumentServiceTest {
                 "application/pdf",
                 "contenido".getBytes()
         );
+        Document document = new Document("manual.pdf");
+        ReflectionTestUtils.setField(document, "id", 10L);
+
+        when(documentRepository.save(any(Document.class)))
+                .thenReturn(document);
+
         // Act
         DocumentAcceptanceResult result = documentService.acceptDocument(file);
 
         // Assert
         assertEquals(DocumentStatus.ACCEPTED, result.status());
         assertEquals("manual.pdf", result.fileName());
+        assertEquals(10L, result.documentId());
 
         ArgumentCaptor<Document> captor =
                 ArgumentCaptor.forClass(Document.class);
@@ -114,13 +125,13 @@ public class DocumentServiceTest {
                 .thenReturn("   ");
         assertThrows(
                 NoExtractableTextException.class,
-                () -> documentService.processDocument(file)
+                () -> documentService.processDocument(file.getInputStream())
         );
         verify(textChunker, never())
                 .split(anyString());
     }
     @Test
-    void shouldReturnChunksWhenDocumentContainsExtractableText() {
+    void shouldReturnChunksWhenDocumentContainsExtractableText() throws IOException {
 
         // Arrange
         MockMultipartFile file = new MockMultipartFile(
@@ -146,7 +157,7 @@ public class DocumentServiceTest {
 
         // Act
         List<String> result =
-                documentService.processDocument(file);
+                documentService.processDocument(file.getInputStream());
 
         // Assert
         assertEquals(chunks, result);
@@ -248,7 +259,7 @@ public class DocumentServiceTest {
                 .generate("chunk3");
     }
     @Test
-    void shouldPersistGeneratedDocumentChunks() {
+    void shouldPersistGeneratedDocumentChunks() throws IOException {
         // GIVEN
         MockMultipartFile file = new MockMultipartFile(
                 "file",
@@ -258,6 +269,11 @@ public class DocumentServiceTest {
         );
 
         Document document = new Document("manual.pdf");
+        Long documentId = 10L;
+        ReflectionTestUtils.setField(document, "id", documentId);
+
+        when(documentRepository.findById(documentId))
+                .thenReturn(Optional.of(document));
         String text = "Knowledge Assistant document";
 
         List<String> chunks = List.of("chunk1", "chunk2");
@@ -275,7 +291,7 @@ public class DocumentServiceTest {
                 .thenReturn(List.of(0.4, 0.5, 0.6));
 
         // WHEN
-        documentService.processAndPersistDocument(file, document);
+        documentService.processAndPersistDocument(documentId, file.getBytes());
 
         // THEN
         verify(documentRepository).save(document);
@@ -285,7 +301,7 @@ public class DocumentServiceTest {
                 ArgumentCaptor.forClass(List.class);
 
         verify(documentPersistenceService)
-                .persistDocument(isNull(), captor.capture());
+                .persistDocument(eq(documentId), captor.capture());
 
         List<EmbeddedChunk> capturedChunks = captor.getValue();
 
@@ -313,6 +329,11 @@ public class DocumentServiceTest {
         );
 
         Document document = new Document("manual.pdf");
+        Long documentId = 10L;
+        ReflectionTestUtils.setField(document, "id", documentId);
+        when(documentRepository.findById(documentId))
+                .thenReturn(Optional.of(document));
+
         String text = "Knowledge Assistant document";
         List<String> chunks = List.of("chunk1", "chunk2");
 
@@ -328,19 +349,20 @@ public class DocumentServiceTest {
         // WHEN
         DocumentProcessingException exception = assertThrows(
                 DocumentProcessingException.class,
-                () -> documentService.processAndPersistDocument(file, document)
+                () -> documentService.processAndPersistDocument(documentId, file.getBytes())
         );
 
         // THEN
         verify(documentRepository).save(document);
 
         verify(documentPersistenceService).markDocumentAsFailed(
-                isNull(),
+                eq(documentId),
                 eq(exception.getMessage())
         );
 
         verify(documentPersistenceService, never())
                 .persistDocument(any(), anyList());
+        assertEquals(DocumentStatus.PROCESSING, document.getStatus());
     }
     @Test
     void shouldPersistFallbackErrorMessageWhenExceptionHasNoMessage(){
@@ -353,6 +375,10 @@ public class DocumentServiceTest {
         );
 
         Document document = new Document("manual.pdf");
+        Long documentId = 10L;
+        ReflectionTestUtils.setField(document, "id", documentId);
+        when(documentRepository.findById(documentId))
+                .thenReturn(Optional.of(document));
 
         when(pdfTextExtractor.extract(any(InputStream.class)))
                 .thenReturn("Knowledge Assistant document");
@@ -369,12 +395,38 @@ public class DocumentServiceTest {
         // WHEN
         assertThrows(
                 RuntimeException.class,
-                () -> documentService.processAndPersistDocument(file, document)
+                () -> documentService.processAndPersistDocument(documentId, file.getBytes())
         );
         // THEN
         verify(documentPersistenceService).markDocumentAsFailed(
-                isNull(),
+                eq(document.getId()),
                 eq("Document processing failed")
         );
+        assertEquals(DocumentStatus.PROCESSING, document.getStatus());
+        verify(documentRepository).save(document);
+    }
+    @Test
+    void shouldThrowExceptionWhenDocumentNotFound() {
+        // GIVEN
+        Long documentId = 10L;
+        byte[] pdfBytes = new byte[]{1, 2, 3};
+
+        when(documentRepository.findById(documentId))
+                .thenReturn(Optional.empty());
+
+        // WHEN + THEN
+        assertThrows(
+                DocumentNotFoundException.class,
+                () -> documentService.processAndPersistDocument(
+                        documentId, pdfBytes
+                )
+        );
+
+        verify(documentRepository).findById(documentId);
+
+        verify(documentRepository, never())
+                .save(any(Document.class));
+
+        verifyNoInteractions(documentPersistenceService);
     }
 }
